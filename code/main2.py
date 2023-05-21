@@ -17,7 +17,7 @@ import gc
 
 num_classes = 5
 batch_size = 32
-num_epochs = 20     # Number of epochs to train for
+num_epochs = 100     # Number of epochs to train for
 INPUT_SIZE = 224   # 2
 data_dir = '../../dataset_AIDER/'
 
