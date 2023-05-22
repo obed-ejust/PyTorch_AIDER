@@ -68,8 +68,8 @@ def main():
     dataloaders = load_dataset(data_dir, data_transforms)
 
     model = select_model(model_name, classes=5)
-    saved_state_dict = torch.load('../results/ResNet50_weigths.pth')
-    model.load_state_dict(saved_state_dict)
+    saved_state_dict = torch.load('../results/ResNet50_best.pth')
+    model.load_state_dict(saved_state_dict['state_dict'])
 
     eval(model, dataloaders)
 

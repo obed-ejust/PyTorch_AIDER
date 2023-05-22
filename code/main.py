@@ -3,64 +3,65 @@ from __future__ import division
 import torch
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
-import numpy as np
-from torchvision import models, transforms
+import shutil
+from torchvision import transforms
 import matplotlib.pyplot as plt
-
+import numpy as np
 from my_utils.dataset import load_dataset
-from my_utils.helper_fns import AverageMeter, accuracy
+from my_utils.helper_fns import AverageMeter, accuracy, ProgressMeter
 from my_models import *
 
 import time
-import copy
+import gc
 
 
 num_classes = 5
 batch_size = 32
-num_epochs = 20     # Number of epochs to train for
+num_epochs = 50     # Number of epochs to train for
 INPUT_SIZE = 224   # 2
-data_dir = '../../dataset_AIDER/'
+data_dir = '../../dataset/AIDER/'
 
-""" Implemented models
-    MobileNet_v2
-    MobileNet_v3
-    SqeezeNet1_0
-    VGG16
-    ShuffleNet_v2 <--
-    EfficientNet_B0
-    ResNet50
+""" Implemented models [ MobileNet_v2, MobileNet_v3, SqeezeNet1_0, VGG16, ShuffleNet_v2 <--
+    EfficientNet_B0  ResNet50
 """
-model_name = "VGG16"
+model_name = "MobileNet_v2"
 cudnn.benchmark = True
 
 # Flag for feature extracting. When False, we finetune the whole model,
 #   when True we only update the reshaped layer params
 feature_extract = True
+best_acc1 = 0
 
 
-def train(trainloader, model, criterion, optimizer, epoch):
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
+def train_model(model, dataloaders, criterion, device, optimizer, epoch):
+    batch_time = AverageMeter('Time', ':6.3f')
+    data_time = AverageMeter('Data', ':6.3f')
+    losses = AverageMeter('Loss', ':.4e')
+    top1 = AverageMeter('Acc@1', ':6.2f')
+    top5 = AverageMeter('Acc@5', ':6.2f')
+    progress = ProgressMeter(len(dataloaders['train']), [batch_time, data_time, losses, top1, top5],
+                             prefix="Epoch: [{}]".format(epoch))
 
+    # switch to train mode
     model.train()
 
     end = time.time()
-    for i, (input, target) in enumerate(trainloader):
+    for i, (images, target) in enumerate(dataloaders['train']):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        input, target = input.cuda(), target.cuda()
+        images = images.to(device)
+        target = target.to(device)
 
         # compute output
-        output = model(input)
+        output = model(images)
         loss = criterion(output, target)
 
         # measure accuracy and record loss
-        prec = accuracy(output, target)[0]
-        losses.update(loss.item(), input.size(0))
-        top1.update(prec.item(), input.size(0))
+        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        losses.update(loss.item(), images.size(0))
+        top1.update(acc1[0], images.size(0))
+        top5.update(acc5[0], images.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -71,97 +72,59 @@ def train(trainloader, model, criterion, optimizer, epoch):
         batch_time.update(time.time() - end)
         end = time.time()
 
-        # if i % 2 == 0:
-        #     model.module.show_params()
-        if i % 2 == 0:
-            print('Epoch: [{0}][{1}/{2}]\t'
-                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Prec {top1.val:.3f}% ({top1.avg:.3f}%)'.format(
-                   epoch, i, len(trainloader), batch_time=batch_time,
-                   data_time=data_time, loss=losses, top1=top1))
+        if i % 30 == 0:
+            progress.display(i)
+        gc.collect()
 
 
-def train_model(model, dataloaders, criterion, optimizer, device, num_epochs=25, is_inception=False):
-    since = time.time()
-    val_acc_history = []
+def validate(val_loader, model, criterion, device):
+    batch_time = AverageMeter('Time', ':6.3f')
+    losses = AverageMeter('Loss', ':.4e')
+    top1 = AverageMeter('Acc@1', ':6.2f')
+    top5 = AverageMeter('Acc@5', ':6.2f')
+    progress = ProgressMeter(len(val_loader), [batch_time, losses, top1, top5], prefix='Test: ')
 
-    best_model_wts = copy.deepcopy(model.state_dict())
-    best_acc = 0.0
+    # switch to evaluate mode
+    model.eval()
 
-    for epoch in range(num_epochs):
-        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
-        print('-' * 10)
+    with torch.no_grad():
+        end = time.time()
+        for i, (images, target) in enumerate(val_loader):
+            images = images.to(device)
+            target = target.to(device)
 
-        # Each epoch has a training and validation phase
-        for phase in ['train', 'val']:
-            if phase == 'train':
-                model.train()  # Set model to training mode
-            else:
-                model.eval()   # Set model to evaluate mode
+            # compute output
+            output = model(images)
+            loss = criterion(output, target)
 
-            running_loss = 0.0
-            running_corrects = 0
+            # measure accuracy and record loss
+            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+            losses.update(loss.item(), images.size(0))
+            top1.update(acc1[0], images.size(0))
+            top5.update(acc5[0], images.size(0))
 
-            # Iterate over data.
-            for inputs, labels in dataloaders[phase]:
-                inputs = inputs.to(device)
-                labels = labels.to(device)
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
 
-                # zero the parameter gradients
-                optimizer.zero_grad()
+            if i % 30 == 0:
+                progress.display(i)
 
-                # forward
-                # track history if only in train
-                with torch.set_grad_enabled(phase == 'train'):
-                    # Get model outputs and calculate loss
-                    # Special case for inception because in training it has an auxiliary output. In train
-                    #   mode we calculate the loss by summing the final output and the auxiliary output
-                    #   but in testing we only consider the final output.
-                    # From https://discuss.pytorch.org/t/how-to-optimize-inception-model-with-auxiliary-classifiers/7958
-                    if is_inception and phase == 'train':
-                        outputs, aux_outputs = model(inputs)
-                        loss1 = criterion(outputs, labels)
-                        loss2 = criterion(aux_outputs, labels)
-                        loss = loss1 + 0.4*loss2
-                    else:
-                        outputs = model(inputs)
-                        loss = criterion(outputs, labels)
+        # TODO: this should also be done with the ProgressMeter
+        print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'.format(top1=top1, top5=top5))
+    # model.module.show_params()
 
-                    _, preds = torch.max(outputs, 1)
+    return top1.avg
 
-                    # backward + optimize only if in training phase
-                    if phase == 'train':
-                        loss.backward()
-                        optimizer.step()
 
-                # statistics
-                running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data)
-
-            epoch_loss = running_loss / len(dataloaders[phase].dataset)
-            epoch_acc = running_corrects.double() / len(dataloaders[phase].dataset)
-
-            print('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
-
-            # deep copy the model
-            if phase == 'val' and epoch_acc > best_acc:
-                best_acc = epoch_acc
-                best_model_wts = copy.deepcopy(model.state_dict())
-            if phase == 'val':
-                val_acc_history.append(epoch_acc)
-
-    time_elapsed = time.time() - since
-    print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
-    print('Best val Acc: {:4f}'.format(best_acc))
-
-    # load best model weights
-    model.load_state_dict(best_model_wts)
-    return model, val_acc_history
+def save_checkpoint(state, is_best, path, checkpoint_file='../results/checkpoints.pth.tar'):
+    torch.save(state, checkpoint_file)
+    if is_best:
+        shutil.copyfile(checkpoint_file, path)
 
 
 def main():
+    global best_acc1
     # LOAD DATA
     data_transforms = {
         'train': transforms.Compose([
@@ -213,63 +176,35 @@ def main():
     optimizer = optim.SGD(params_to_update, lr=0.001, momentum=0.9)
     criterion = nn.CrossEntropyLoss()
 
-    # Train and evaluate
-    model, hist = train_model(model, dataloaders, criterion, optimizer, device, num_epochs=num_epochs)
-    # train(dataloaders["train"], model, criterion, optimizer, num_epochs)
-    weights_filepath = '../results/' + model_name + '_weigths.pth'
-    model_filepath = '../results/' + model_name + '_model.pth'
-    torch.save(model.state_dict(), weights_filepath)  # saves weights only
-    torch.save(model, model_filepath)
+    model_filepath = '../results/' + model_name + '_best.pth'
+    # Train and evaluate loop
+    val_acc_history = []
+    for epoch in range(num_epochs):
 
-    # ****************************************************************
-    # ----Evaluation OUTPUT REPORT-----------------
-    from sklearn.metrics import confusion_matrix, classification_report
-    import seaborn as sn
-    import pandas as pd
+        train_model(model, dataloaders, criterion, device, optimizer, epoch)
 
-    y_pred = []
-    y_true = []
+        # evaluate on validation set
+        acc1 = validate(dataloaders['val'], model, criterion, device)
+        # remember best acc@1 and save checkpoint
+        is_best = acc1 > best_acc1
+        best_acc1 = max(acc1, best_acc1)
+        print('best_acc:' + str(best_acc1))
+        val_acc_history.append(acc1)
 
-    # iterate over test data
-    model.eval()
-    for inputs, labels in dataloaders['val']:
-        inputs = inputs.to(device)
-        labels = labels.to(device)
+        save_checkpoint({
+            'epoch': epoch + 1,
+            'arch': model_name,
+            'state_dict': model.state_dict(),
+            'best_acc1': best_acc1,
+            'optimizer': optimizer.state_dict(),
+        }, is_best, path=model_filepath)
 
-        output = model(inputs)  # Feed Network
-        output = (torch.max(torch.exp(output), 1)[1]).data.cpu().numpy()
-        y_pred.extend(output)  # Save Prediction
-
-        labels = labels.data.cpu().numpy()
-        y_true.extend(labels)  # Save Truth
-
-    # constant for classes
-    classes = ('collapsed_building', 'fire', 'flooded_areas', 'normal', 'traffic_incident' )
-
-    # Build confusion matrix
-    cf_matrix = confusion_matrix(y_true, y_pred)
-    df_cm = pd.DataFrame(cf_matrix / np.sum(cf_matrix, axis=1)[:, None], index=[i for i in classes],
-                         columns=[i for i in classes])
-    plt.figure(figsize=(12, 7))
-    sn.heatmap(df_cm, annot=True)
-    conf_mtrx_filepath = '../results/' + model_name + 'confusionMatrix.png'
-    plt.savefig(conf_mtrx_filepath)
-    plt.clf()
-
-    print(classification_report(y_true, y_pred, target_names=classes))
-
-    # --------------------------------
-
-    # Plot the training curves of validation accuracy vs. number
-    #  of training epochs for the transfer learning method and
-    #  the model trained from scratch
-
-    ohist = [h.cpu().numpy() for h in hist]
-
+    # Plot the training curves of validation acc vs epoch
+    val_hist = [h.cpu().numpy() for h in val_acc_history]
     plt.title("Validation Accuracy vs. Number of Training Epochs")
     plt.xlabel("Training Epochs")
     plt.ylabel("Validation Accuracy")
-    plt.plot(range(1, num_epochs + 1), ohist, label="Pretrained")
+    plt.plot(range(1, num_epochs + 1), val_hist, label=model_name)
     plt.ylim((0, 1.))
     plt.xticks(np.arange(1, num_epochs + 1, 1.0))
     plt.legend()
