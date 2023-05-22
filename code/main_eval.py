@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from torchvision import transforms
 
-model_name = "ResNet50"
+model_name = "MobileNet_v2"
 
 
 def eval(model, dataloaders,):
@@ -46,7 +46,7 @@ def eval(model, dataloaders,):
 
 def main():
     INPUT_SIZE = 224
-    data_dir = '../../dataset_AIDER/'
+    data_dir = '../../dataset/AIDER/'
 
     # LOAD DATA
     data_transforms = {
@@ -68,7 +68,7 @@ def main():
     dataloaders = load_dataset(data_dir, data_transforms)
 
     model = select_model(model_name, classes=5)
-    saved_state_dict = torch.load('../results/ResNet50_best.pth')
+    saved_state_dict = torch.load('../results/MobileNet_v2_best.pth')
     model.load_state_dict(saved_state_dict['state_dict'])
 
     eval(model, dataloaders)

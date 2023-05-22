@@ -24,7 +24,7 @@ data_dir = '../../dataset/AIDER/'
 """ Implemented models [ MobileNet_v2, MobileNet_v3, SqeezeNet1_0, VGG16, ShuffleNet_v2 <--
     EfficientNet_B0  ResNet50
 """
-model_name = "MobileNet_v2"
+model_name = "MobileNet_v3"
 cudnn.benchmark = True
 
 # Flag for feature extracting. When False, we finetune the whole model,
