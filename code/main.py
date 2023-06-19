@@ -17,14 +17,14 @@ import gc
 
 num_classes = 5
 batch_size = 32
-num_epochs = 50     # Number of epochs to train for
+num_epochs = 100     # Number of epochs to train for
 INPUT_SIZE = 224   # 2
 data_dir = '../../dataset/AIDER/'
 
 """ Implemented models [ MobileNet_v2, MobileNet_v3, SqeezeNet1_0, VGG16, ShuffleNet_v2 <--
     EfficientNet_B0  ResNet50
 """
-model_name = "MobileNet_v3"
+model_name = "EfficientNet_B0"
 cudnn.benchmark = True
 
 # Flag for feature extracting. When False, we finetune the whole model,
