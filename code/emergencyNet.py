@@ -13,7 +13,7 @@ class ConvBlock(nn.Module):
         self.bn = nn.BatchNorm2d(out_channels)
 
         if act == 'm':
-            # self.act = Mish()
+            self.act = Mish()
             pass
         elif act == 'l':
             self.act = nn.LeakyReLU(0.1)
@@ -37,12 +37,20 @@ class ConvBlock(nn.Module):
         return out
 
 
+class Mish(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x * (torch.tanh(F.softplus(x)))
+
+
 class SeparableConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, dropout_rate=None, act='l'):
         super(SeparableConvBlock, self).__init__()
 
         self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=kernel_size, stride=stride,
-                                   padding=kernel_size // 2, groups=in_channels, bias=False)
+                                   padding="same", groups=in_channels, bias=False)
         nn.init.kaiming_normal_(self.depthwise.weight, mode='fan_out', nonlinearity='relu')
 
         self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False)
@@ -51,7 +59,7 @@ class SeparableConvBlock(nn.Module):
         self.bn = nn.BatchNorm2d(out_channels)
 
         if act == 'm':
-            # self.act = Mish()
+            self.act = Mish()
             pass
         elif act == 'l':
             self.act = nn.LeakyReLU(0.2)
@@ -79,112 +87,147 @@ class SeparableConvBlock(nn.Module):
 class FusionBlock(nn.Module):
     def __init__(self, name, fusion_type='add'):
         super(FusionBlock, self).__init__()
-
-        if fusion_type == 'add':
-            self.fusion = nn.Sequential(nn.Identity())
-
-        elif fusion_type == 'max':
-            self.fusion = nn.Sequential(nn.MaxPool2d(kernel_size=1, stride=1))
-
-        elif fusion_type == 'con':
-            self.fusion = nn.Sequential(nn.Identity())
-
-        elif fusion_type == 'avg':
-            self.fusion = nn.Sequential(nn.AvgPool2d(kernel_size=1, stride=1))
-
         self.name = name
+        self.type = fusion_type
 
-    def forward(self, *tensors):
-        if len(tensors) == 1:
-            return tensors[0]
-        else:
-            if self.fusion[0] is nn.Identity():
-                return nn.torch.add(*tensors, name='add_' + self.name)
-            elif self.fusion[0] is nn.MaxPool2d(kernel_size=1, stride=1):
-                return nn.torch.max(nn.torch.stack(tensors), dim=0, keepdim=False, name='max_' + self.name)[0]
-            elif self.fusion[0] is nn.AvgPool2d(kernel_size=1, stride=1):
-                return nn.torch.mean(nn.torch.stack(tensors), dim=0, keepdim=False, name='avg_' + self.name)
-            elif self.fusion[0] is nn.Identity():
-                return nn.torch.cat(tensors, dim=1, name='conc_' + self.name)
+    def forward(self, tensors):
+        if self.type == 'add':
+            return torch.add(*tensors, name='add_' + self.name)
+
+        if self.type == 'max':
+            return torch.max(*tensors, name='max_' + self.name)
+
+        if self.type == 'con':
+            return torch.cat(tensors, dim=1, name='conc_' + self.name)
+
+        if self.type == 'avg':
+            return torch.mean(torch.stack(tensors, dim=0), dim=0, name='avg_' + self.name)
+
+
+class Activation(nn.Module):
+    def __init__(self, name, t='-', n=255):
+        super(Activation, self).__init__()
+        self.name = name
+        self.t = t
+        self.n = n
+
+    def forward(self, x):
+        if self.t == 'r':
+            return F.relu(x, inplace=True)
+        if self.t == 'l':
+            return F.leaky_relu(x, negative_slope=0.2, inplace=True)
+        if self.t == 'e':
+            return F.elu(x, inplace=True)
+        if self.t == 'n':
+            return torch.clamp(F.relu(x), 0, self.n)
+        if self.t == 'hs':
+            return F.hardsigmoid(x)
+        if self.t == 's':
+            return torch.sigmoid(x)
+        if self.t == 't':
+            return torch.tanh(x)
+        if self.t == 'm':
+            return Mish(x)
+        return x
 
 
 class AtrousBlock(nn.Module):
-    def __init__(self, in_channels, ind=0, nf=32, fs=3, strides=1, act='l', dropout_rate=None, weight_decay=5e-4,
-                 pool=0, FUS='max'):
+    def __init__(self, in_channels, out_channels=32, kernel_size=3, stride=1, act='relu', dropout_rate=None,
+                 fusion_type='max'):
         super(AtrousBlock, self).__init__()
-
-        self.ind = ind
-        self.nf = nf
-        self.fs = fs
-        self.strides = strides
+        self.kernel_size = kernel_size
+        self.stride = stride
         self.act = act
         self.dropout_rate = dropout_rate
-        self.weight_decay = weight_decay
-        self.pool = pool
-        self.FUS = FUS
+        self.fusion_type = fusion_type
 
-        self.ki = nn.init.kaiming_normal_
-        self.kr = nn.regularizers.l2(weight_decay)
-        self.x = []
-        self.d = []
-        self.ab = 3
+        self.conv_redu = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False)
+        nn.init.kaiming_normal_(self.conv_redu.weight, mode='fan_out', nonlinearity='relu')
+        self.bn_redu = nn.BatchNorm2d(out_channels)
 
-        self.redu_r = in_channels // 2
-        if ind > 0:
-            self.redu_conv = nn.Conv2d(in_channels, self.redu_r, kernel_size=1, stride=1, padding=0, bias=False)
-            self.bn_redu = nn.BatchNorm2d(self.redu_r)
+        self.conv_depth_list = nn.ModuleList([
+            nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=stride,
+                      padding=kernel_size//2 * (i+1), dilation=kernel_size//2 * (i+1), bias=False)
+            for i in range(3)
+        ])
+        for conv_depth in self.conv_depth_list:
+            nn.init.kaiming_normal_(conv_depth.weight, mode='fan_out', nonlinearity='relu')
 
-        self.depthwise_convs = nn.ModuleList()
-        self.bn_depthwise = nn.ModuleList()
+        self.bn_list = nn.ModuleList([nn.BatchNorm2d(out_channels) for i in range(3)])
 
-        for i in range(self.ab):
-            self.depthwise_convs.append(
-                nn.Conv2d(self.redu_r, self.redu_r, kernel_size=self.fs, stride=self.strides, padding=self.fs // 2,
-                          dilation=i+1, groups=self.redu_r, bias=False))
-            self.bn_depthwise.append(nn.BatchNorm2d(self.redu_r))
+        self.conv_out = nn.Conv2d(out_channels*4, out_channels, kernel_size=1, stride=1, padding=0, bias=False)
+        nn.init.kaiming_normal_(self.conv_out.weight, mode='fan_out', nonlinearity='relu')
+        self.bn_out = nn.BatchNorm2d(out_channels)
 
-        self.fusion_block = FusionBlock(in_channels)
+        self.act_redu = Activation(name='act_redu', t=self.act)
+        self.act_depth = [Activation(name=f'atrous_act_{i+1}', t=self.act) for i in range(3)]
+        self.act_out = Activation(name='act_out', t=self.act)
 
-        self.conv = nn.Conv2d(in_channels, nf, kernel_size=1, stride=1, padding=0, bias=False)
-        self.bn = nn.BatchNorm2d(nf)
+        self.fusion_block = FusionBlock(name='atrous_Fusion_block', fusion_type=self.fusion_type)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.ind > 0:
-            x_i = self.redu_conv(x)
-            x_i = self.bn_redu(x_i)
-            x_i = F.relu(x_i)
-        else:
-            x_i = x
+    def forward(self, x):
+        x_redu = self.conv_redu(x)
+        x_redu = self.bn_redu(x_redu)
+        x_redu = self.act_redu(x_redu)
 
-        for i in range(self.ab):
-            self.x.append(self.mininet(x_i, i, self.ind))
-            self.d.append(self.x[i].shape[1])
+        x_depth_list = [self.conv_depth_list[i](x_redu) for i in range(3)]
+        x_depth_list = [self.bn_list[i](x_depth_list[i]) for i in range(3)]
+        x_depth_list = [self.act_depth[i](x_depth_list[i]) for i in range(3)]
+        x_depth_list = [F.interpolate(x_depth_list[i], size=x_depth_list[0].shape[2:], mode='bilinear',
+                                      align_corners=False) for i in range(3)]
 
-        mr = [x_i]
+        x_fused = self.fusion_block(x_depth_list + [x_redu])
 
-        for i in range(0, len(self.d)):
-            if self.d[0] == self.d[i]:
-                mr.append(self.x[i])
-
-        if len(mr) > 1:
-            f = self.fusion_block(*mr)
-        else:
-            f = self.x[0]
-
-        b = self.conv(f)
-        b = self.bn(b)
-        b = F.relu(b)
+        x_out = self.conv_out(x_fused)
+        x_out = self.bn_out(x_out)
+        x_out = self.act_out(x_out)
 
         if self.dropout_rate is not None and self.dropout_rate != 0.:
-            b = nn.Dropout(self.dropout_rate)(b)
+            x_out = nn.Dropout2d(p=self.dropout_rate)(x_out)
 
-        return b
+        return x_out
 
-    def mininet(self, x, dr, ind):
-        m = self.depthwise_convs[dr](x)
-        m = self.bn_depthwise[dr](m)
-        m = F.relu(m)
-        # if dropout_rate != None and dropout_rate != 0.:
-        #     m = Dropout(dropout_rate)(m)
-        return m
 
+class ACFFModel(nn.Module):
+    def __init__(self, num_classes):
+        super(ACFFModel, self).__init__()
+
+        self.conv0 = nn.Conv2d(3, 32, kernel_size=5, stride=2, padding=2, bias=False)
+        self.bn0 = nn.BatchNorm2d(32)
+        self.act0 = nn.ReLU(inplace=True)
+        self.block1 = AtrousBlock(32, 64, kernel_size=3, stride=1, act='relu', dropout_rate=None, fusion_type='add')
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.block2 = AtrousBlock(64, 96, kernel_size=3, stride=1, act='relu', dropout_rate=None, fusion_type='add')
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.block3 = AtrousBlock(96, 128, kernel_size=3, stride=1, act='relu', dropout_rate=None, fusion_type='add')
+        self.pool3 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.block4 = AtrousBlock(128, 128, kernel_size=3, stride=1, act='relu', dropout_rate=None, fusion_type='add')
+        self.pool4 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.block5 = AtrousBlock(128, 128, kernel_size=3, stride=1, act='relu', dropout_rate=None, fusion_type='add')
+        self.block6 = AtrousBlock(128, 128, kernel_size=3, stride=1, act='relu', dropout_rate=None, fusion_type='add')
+        self.block7 = AtrousBlock(128, 256, kernel_size=3, stride=1, act='relu', dropout_rate=None, fusion_type='add')
+        self.sepconv = SeparableConvBlock(256, num_classes, kernel_size=1, stride=1, dropout_rate=None, act='l')
+        self.pool5 = nn.AdaptiveAvgPool2d((1, 1))  # Global Average pool
+        self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, x):
+        x = self.conv0(x)
+        x = self.bn0(x)
+        x = self.act0(x)
+        x = self.block1(x)
+        x = self.pool1(x)
+        x = self.block2(x)
+        x = self.pool2(x)
+        x = self.block3(x)
+        x = self.pool3(x)
+        x = self.block4(x)
+        x = self.pool4(x)
+        x = self.block5(x)
+        x = self.block6(x)
+        x = self.block7(x)
+        x = self.sepconv(x)
+        x = self.pool5(x)  # Global Average pool
+        x = x.view(x.size(0), -1)  # Flatten the output
+        cls = self.softmax(x)
+
+        return cls
