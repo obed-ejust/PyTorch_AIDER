@@ -148,6 +148,7 @@ def main():
     # model = initialize_model(num_classes, feature_extract, use_pretrained=True)
     model = select_model(model_name, classes=5)
 
+
     # Print the model we just instantiated
     print(model)
 

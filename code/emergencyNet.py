@@ -39,9 +39,10 @@ class ConvBlock(nn.Module):
 
 class Mish(nn.Module):
     def __init__(self):
-        super().__init__()
+        super(Mish, self).__init__()
 
-    def forward(self, x):
+    @staticmethod
+    def forward(x):
         return x * (torch.tanh(F.softplus(x)))
 
 
@@ -92,16 +93,28 @@ class FusionBlock(nn.Module):
 
     def forward(self, tensors):
         if self.type == 'add':
-            return torch.add(*tensors, name='add_' + self.name)
+            out = torch.add(*tensors)
+            out_named = out.clone().detach().requires_grad_(True)
+            out_named.set_(out_named, name='add_' + self.name)
+            return out_named
 
         if self.type == 'max':
-            return torch.max(*tensors, name='max_' + self.name)
+            out = torch.max(*tensors)
+            out_named = out.clone().detach().requires_grad_(True)
+            out_named.set_(out_named, name='max_' + self.name)
+            return out_named
 
         if self.type == 'con':
-            return torch.cat(tensors, dim=1, name='conc_' + self.name)
+            out = torch.cat(tensors, dim=1)
+            out_named = out.clone().detach().requires_grad_(True)
+            out_named.set_(out_named, name='con_' + self.name)
+            return out_named
 
         if self.type == 'avg':
-            return torch.mean(torch.stack(tensors, dim=0), dim=0, name='avg_' + self.name)
+            out = torch.mean(torch.stack(tensors, dim=0), dim=0)
+            out_named = out.clone().detach().requires_grad_(True)
+            out_named.set_(out_named, name='avg_' + self.name)
+            return out_named
 
 
 class Activation(nn.Module):
@@ -127,52 +140,51 @@ class Activation(nn.Module):
         if self.t == 't':
             return torch.tanh(x)
         if self.t == 'm':
-            return Mish(x)
+            return Mish.forward(x)
         return x
 
 
 class AtrousBlock(nn.Module):
-    def __init__(self, in_channels, out_channels=32, kernel_size=3, stride=1, act='relu', dropout_rate=None,
-                 fusion_type='max'):
+    def __init__(self, in_channels, out_channels=32, kernel_size=3, stride=1, act='l', dropout_rate=None,
+                 fusion_type='add'):
         super(AtrousBlock, self).__init__()
+        self.redu_r = 16
         self.kernel_size = kernel_size
         self.stride = stride
         self.act = act
         self.dropout_rate = dropout_rate
         self.fusion_type = fusion_type
 
-        self.conv_redu = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False)
+        self.conv_redu = nn.Conv2d(in_channels, self.redu_r, kernel_size=1, stride=1, padding='same', bias=False)
         nn.init.kaiming_normal_(self.conv_redu.weight, mode='fan_out', nonlinearity='relu')
-        self.bn_redu = nn.BatchNorm2d(out_channels)
+        self.bn_redu = nn.BatchNorm2d(self.redu_r)
+        self.act_redu = Activation(name='act_redu', t=self.act)
 
         self.conv_depth_list = nn.ModuleList([
-            nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=stride,
-                      padding=kernel_size//2 * (i+1), dilation=kernel_size//2 * (i+1), bias=False)
-            for i in range(3)
-        ])
+            nn.Conv2d(self.redu_r, self.redu_r, kernel_size=kernel_size, stride=stride,
+                      padding='same', dilation=(i+1), groups=self.redu_r, bias=False) for i in range(3)])
         for conv_depth in self.conv_depth_list:
             nn.init.kaiming_normal_(conv_depth.weight, mode='fan_out', nonlinearity='relu')
 
-        self.bn_list = nn.ModuleList([nn.BatchNorm2d(out_channels) for i in range(3)])
+        self.bn_list = nn.ModuleList([nn.BatchNorm2d(self.redu_r) for _ in range(3)])
+        self.act_depth = Activation(name='atrous_act', t=self.act)
 
-        self.conv_out = nn.Conv2d(out_channels*4, out_channels, kernel_size=1, stride=1, padding=0, bias=False)
+        self.conv_out = nn.Conv2d(self.redu_r, out_channels, kernel_size=1, stride=1, padding=0, bias=False)
         nn.init.kaiming_normal_(self.conv_out.weight, mode='fan_out', nonlinearity='relu')
         self.bn_out = nn.BatchNorm2d(out_channels)
-
-        self.act_redu = Activation(name='act_redu', t=self.act)
-        self.act_depth = [Activation(name=f'atrous_act_{i+1}', t=self.act) for i in range(3)]
         self.act_out = Activation(name='act_out', t=self.act)
 
         self.fusion_block = FusionBlock(name='atrous_Fusion_block', fusion_type=self.fusion_type)
 
     def forward(self, x):
-        x_redu = self.conv_redu(x)
+        self.redu_r = x.size(1) // 2   # reduction ratio -> get channels - NCHW - channels first format
+        x_redu = self.conv_redu(x, out_channels=self.redu_r)
         x_redu = self.bn_redu(x_redu)
         x_redu = self.act_redu(x_redu)
 
         x_depth_list = [self.conv_depth_list[i](x_redu) for i in range(3)]
         x_depth_list = [self.bn_list[i](x_depth_list[i]) for i in range(3)]
-        x_depth_list = [self.act_depth[i](x_depth_list[i]) for i in range(3)]
+        x_depth_list = [self.act_depth(x_depth_list[i]) for i in range(3)]
         x_depth_list = [F.interpolate(x_depth_list[i], size=x_depth_list[0].shape[2:], mode='bilinear',
                                       align_corners=False) for i in range(3)]
 
