@@ -3,6 +3,7 @@ from __future__ import division
 import torch
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
+import torch.optim.lr_scheduler as lr_scheduler
 import shutil
 from torchvision import transforms
 import matplotlib.pyplot as plt
@@ -18,7 +19,7 @@ import gc
 
 num_classes = 5
 batch_size = 32
-num_epochs = 250     # Number of epochs to train for
+num_epochs = 500     # Number of epochs to train for
 INPUT_SIZE = 224   # 2
 data_dir = '../../dataset/AIDER/'
 
@@ -34,7 +35,7 @@ feature_extract = True
 best_acc1 = 0
 
 
-def train_model(model, dataloaders, criterion, device, optimizer, epoch):
+def train_model(model, dataloaders, criterion, device, optimizer, scheduler, epoch):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -69,6 +70,9 @@ def train_model(model, dataloaders, criterion, device, optimizer, epoch):
         loss.backward()
         optimizer.step()
 
+        scheduler.step()  # Update the learning rate
+        # scheduler.step(val_loss)  # in the case of ReduceLROnPlateau
+
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
@@ -76,6 +80,31 @@ def train_model(model, dataloaders, criterion, device, optimizer, epoch):
         if i % 30 == 0:
             progress.display(i)
         gc.collect()
+
+
+def evaluate(model, dataloader, criterion, device):
+    """
+    This function is similar to the validate function
+    Can use it to simply get the validation losses and acc during training
+    """
+    model.eval()  # Set the model to evaluation mode
+    total_loss = 0.0
+    total_correct = 0
+    total_samples = 0
+    with torch.no_grad():  # Disable gradient calculation for efficiency
+        for inputs, labels in dataloader:
+            inputs = inputs.to(device)  # Move inputs to the same device as the model
+            labels = labels.to(device)  # Move labels to the same device as the model
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            _, predicted = torch.max(outputs, 1)
+            total_loss += loss.item() * inputs.size(0)
+            correct = int(predicted == labels)
+            total_correct += correct
+            total_samples += inputs.size(0)
+    avg_loss = total_loss / total_samples
+    acc = total_correct / total_samples
+    return avg_loss, acc
 
 
 def validate(val_loader, model, criterion, device):
@@ -175,7 +204,12 @@ def main():
             if param.requires_grad is True:
                 print("\t", name)
 
-    optimizer = optim.SGD(params_to_update, lr=0.001, momentum=0.9)
+    optimizer = optim.SGD(params_to_update, lr=0.01, momentum=0.9)
+
+    steps_per_epoch = len(dataloaders['train'])
+    # Define the cosine annealing learning rate scheduler
+    scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * steps_per_epoch, eta_min=0.001)
+    # scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
 
     class_weights = [1.0, 1.0, 1., 0.35, 1.]
     weights = torch.FloatTensor(class_weights).to(device)
@@ -187,7 +221,7 @@ def main():
     val_acc_history = []
     for epoch in range(num_epochs):
 
-        train_model(model, dataloaders, criterion, device, optimizer, epoch)
+        train_model(model, dataloaders, criterion, device, optimizer, scheduler, epoch)
 
         # evaluate on validation set
         acc1 = validate(dataloaders['val'], model, criterion, device)
@@ -206,16 +240,19 @@ def main():
         }, is_best, path=model_filepath)
 
     # Plot the training curves of validation acc vs epoch
-    val_hist = [h.cpu().numpy() for h in val_acc_history]
-    plt.title("Validation Accuracy vs. Number of Training Epochs")
-    plt.xlabel("Training Epochs")
-    plt.ylabel("Validation Accuracy")
-    plt.plot(range(1, num_epochs + 1), val_hist, label=model_name)
-    plt.ylim((0, 1.))
-    plt.xticks(np.arange(1, num_epochs + 1, 1.0))
-    plt.legend()
-    train_plot_filepath = '../results/' + model_name + 'trainingPlot.png'
-    plt.savefig(train_plot_filepath)
+    if isinstance(val_acc_history, list) and len(val_acc_history) > 0:
+        val_hist = [h.cpu().numpy() if isinstance(h, torch.Tensor) else h for h in val_acc_history]
+        plt.title("Validation Accuracy vs. Number of Training Epochs")
+        plt.xlabel("Training Epochs")
+        plt.ylabel("Validation Accuracy")
+        plt.plot(range(1, num_epochs + 1), val_hist, label=model_name)
+        plt.ylim((0, 1.))
+        plt.xticks(np.arange(1, num_epochs + 1, 1.0))
+        plt.legend()
+        train_plot_filepath = '../results/' + model_name + 'trainingPlot.png'
+        plt.savefig(train_plot_filepath)
+    else:
+        print("Error: Can not plot: val_acc_history is not a list or is empty.")
 
 
 if __name__ == '__main__':
