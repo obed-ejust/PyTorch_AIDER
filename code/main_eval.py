@@ -7,8 +7,9 @@ from my_utils.dataset import load_dataset
 import numpy as np
 import torch
 from torchvision import transforms
+from emergencyNet import ACFFModel
 
-model_name = "ResNet50"
+model_name = "emergencyNet"
 
 
 def eval(model, dataloaders,):
@@ -67,8 +68,9 @@ def main():
     # Create dataloaders "train" and "val"
     dataloaders = load_dataset(data_dir, data_transforms)
 
-    model = select_model(model_name, classes=5)
-    saved_state_dict = torch.load('../results/ResNet50_best.pth')
+    # model = select_model(model_name, classes=5)
+    model = ACFFModel(5)
+    saved_state_dict = torch.load('../results/emergencyNet_best.pth')
     model.load_state_dict(saved_state_dict['state_dict'])
 
     eval(model, dataloaders)

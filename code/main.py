@@ -10,6 +10,7 @@ import numpy as np
 from my_utils.dataset import load_dataset
 from my_utils.helper_fns import AverageMeter, accuracy, ProgressMeter
 from my_models import *
+from emergencyNet import ACFFModel
 
 import time
 import gc
@@ -17,14 +18,14 @@ import gc
 
 num_classes = 5
 batch_size = 32
-num_epochs = 100     # Number of epochs to train for
+num_epochs = 250     # Number of epochs to train for
 INPUT_SIZE = 224   # 2
 data_dir = '../../dataset/AIDER/'
 
 """ Implemented models [ MobileNet_v2, MobileNet_v3, SqeezeNet1_0, VGG16, ShuffleNet_v2 <--
     EfficientNet_B0  ResNet50
 """
-model_name = "EfficientNet_B0"
+model_name = "emergencyNet"
 cudnn.benchmark = True
 
 # Flag for feature extracting. When False, we finetune the whole model,
@@ -146,8 +147,8 @@ def main():
 
     # Initialize the model for this run
     # model = initialize_model(num_classes, feature_extract, use_pretrained=True)
-    model = select_model(model_name, classes=5)
-
+    # model = select_model(model_name, classes=5)
+    model = ACFFModel(num_classes)
 
     # Print the model we just instantiated
     print(model)
@@ -175,7 +176,11 @@ def main():
                 print("\t", name)
 
     optimizer = optim.SGD(params_to_update, lr=0.001, momentum=0.9)
-    criterion = nn.CrossEntropyLoss()
+
+    class_weights = [1.0, 1.0, 1., 0.35, 1.]
+    weights = torch.FloatTensor(class_weights).to(device)
+
+    criterion = nn.CrossEntropyLoss(weight=weights)
 
     model_filepath = '../results/' + model_name + '_best.pth'
     # Train and evaluate loop

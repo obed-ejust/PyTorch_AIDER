@@ -93,10 +93,10 @@ class FusionBlock(nn.Module):
 
     def forward(self, tensors):
         if self.type == 'add':
-            out = torch.add(*tensors)
-            out_named = out.clone().detach().requires_grad_(True)
-            out_named.set_(out_named, name='add_' + self.name)
-            return out_named
+            out = tensors[0]
+            for tensor in tensors[1:]:
+                out = torch.add(out, tensor)
+            return out
 
         if self.type == 'max':
             out = torch.max(*tensors)
@@ -178,7 +178,7 @@ class AtrousBlock(nn.Module):
 
     def forward(self, x):
         self.redu_r = x.size(1) // 2   # reduction ratio -> get channels - NCHW - channels first format
-        x_redu = self.conv_redu(x, out_channels=self.redu_r)
+        x_redu = self.conv_redu(x)
         x_redu = self.bn_redu(x_redu)
         x_redu = self.act_redu(x_redu)
 
