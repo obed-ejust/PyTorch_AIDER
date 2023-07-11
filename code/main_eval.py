@@ -4,10 +4,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from my_models import *
 from my_utils.dataset import load_dataset
+from my_utils.helper_fns import print_size_of_model, print_no_of_parameter
 import numpy as np
 import torch
 from torchvision import transforms
 from emergencyNet import ACFFModel
+
 
 model_name = "emergencyNet"
 
@@ -72,6 +74,10 @@ def main():
     model = ACFFModel(5)
     saved_state_dict = torch.load('../results/emergencyNet_best.pth')
     model.load_state_dict(saved_state_dict['state_dict'])
+
+    # print(model)
+    print_size_of_model(model)
+    print_no_of_parameter(model)
 
     eval(model, dataloaders)
 

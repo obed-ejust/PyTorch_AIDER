@@ -1,4 +1,5 @@
 import torch
+import os
 
 
 class AverageMeter(object):
@@ -67,3 +68,13 @@ def adjust_learning_rate(optimizer, epoch, args):
         for param_group in optimizer.param_groups:
             param_group['lr'] = param_group['lr'] * 0.1
 
+
+def print_size_of_model(model):
+    torch.save(model.state_dict(), "temp.p")
+    print('Size (MB):', os.path.getsize("temp.p") / 1e6)
+    os.remove('temp.p')
+
+
+def print_no_of_parameter(model):
+    # print('Number of parameters:', sum(p.numel() for p in model.parameters() if p.requires_grad))
+    print('Number of parameters:', sum(p.numel() for p in model.parameters()))
