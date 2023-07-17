@@ -11,7 +11,7 @@ from torchvision import transforms
 from emergencyNet import ACFFModel
 
 
-model_name = "MobileNet_v2"  # emergencyNet" MobileNet_v2
+model_name = "emergencyNet"  # MobileNet_v2
 
 
 def eval(model, dataloaders,):
@@ -20,7 +20,6 @@ def eval(model, dataloaders,):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.to(device)
     # iterate over test data
-    it = 0
     model.eval()
     for inputs, labels in dataloaders['val']:
         inputs = inputs.to(device)
@@ -29,9 +28,6 @@ def eval(model, dataloaders,):
         output = model(inputs)  # Feed Network
         output = (torch.max(torch.exp(output), 1)[1]).data.cpu().numpy()
         y_pred.extend(output)  # Save Prediction
-        if it <= 5:
-            it += 1
-            print(f"sample output:{output}")
 
         labels = labels.data.cpu().numpy()
         y_true.extend(labels)  # Save Truth
@@ -74,16 +70,20 @@ def main():
     # Create dataloaders "train" and "val"
     dataloaders = load_dataset(data_dir, data_transforms)
 
-    model = select_model(model_name, classes=5)
-    # model = ACFFModel(5)
-    saved_state_dict = torch.load('../results/MobileNet_v2_best.pth')
+    #  model = select_model(model_name, classes=5)
+    model = ACFFModel(5)
+    saved_state_dict = torch.load('../results/emergencyNet_best.pth')
     model.load_state_dict(saved_state_dict['state_dict'])
 
-    # print(model)
+    print(model)
+    # save entire model
+    torch.save(model, '../results/emergencyNet.pth')
+
     print_size_of_model(model)
     print_no_of_parameter(model)
 
-    eval(model, dataloaders)
+    # Evaluate the Model
+    # eval(model, dataloaders)
 
 
 if __name__ == '__main__':
