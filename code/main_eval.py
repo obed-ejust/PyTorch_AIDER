@@ -44,7 +44,7 @@ def eval(model, dataloaders,):
     conf_mtrx_filepath = '../results/' + model_name + 'confusionMatrix.png'
     plt.savefig(conf_mtrx_filepath)
     plt.clf()
-    print(classification_report(y_true, y_pred, target_names=classes))
+    print(classification_report(y_true, y_pred, target_names=classes, digits=3))
 
 
 def main():
@@ -75,15 +75,15 @@ def main():
     saved_state_dict = torch.load('../results/emergencyNet_best.pth')
     model.load_state_dict(saved_state_dict['state_dict'])
 
-    print(model)
+    # print(model)
     # save entire model
-    torch.save(model, '../results/emergencyNet.pth')
+    # torch.save(model, '../results/emergencyNet.pth')
 
     print_size_of_model(model)
     print_no_of_parameter(model)
 
     # Evaluate the Model
-    # eval(model, dataloaders)
+    eval(model, dataloaders)
 
 
 if __name__ == '__main__':
