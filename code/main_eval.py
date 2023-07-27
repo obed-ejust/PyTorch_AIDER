@@ -11,7 +11,7 @@ from torchvision import transforms
 from emergencyNet import ACFFModel
 
 
-model_name = "emergencyNet"  # MobileNet_v2
+model_name = "EfficientNet_B0"  # emergencyNet"  # MobileNet_v2
 
 
 def eval(model, dataloaders,):
@@ -70,12 +70,12 @@ def main():
     # Create dataloaders "train" and "val"
     dataloaders = load_dataset(data_dir, data_transforms)
 
-    #  model = select_model(model_name, classes=5)
-    model = ACFFModel(5)
-    saved_state_dict = torch.load('../results/emergencyNet_best.pth')
+    model = select_model(model_name, classes=5)
+    # model = ACFFModel(5) # Loading emergencyNet model
+    saved_state_dict = torch.load('../results/EfficientNet_B0_best.pth')
     model.load_state_dict(saved_state_dict['state_dict'])
 
-    # print(model)
+    print(model)
     # save entire model
     # torch.save(model, '../results/emergencyNet.pth')
 
