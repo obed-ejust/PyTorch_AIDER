@@ -1,4 +1,5 @@
 from sklearn.metrics import confusion_matrix, classification_report
+import random
 import seaborn as sn
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -8,20 +9,28 @@ from my_utils.helper_fns import print_size_of_model, print_no_of_parameter
 import numpy as np
 import torch
 from torchvision import transforms
-from emergencyNet import ACFFModel
+from emergencyNet2 import ACFFModel
+
+model_name = "emergencyNetv12"  # "EfficientNet_B0"  # emergencyNet"  # MobileNet_v2
+
+seed = 42
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(seed)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 
-model_name = "EfficientNet_B0"  # emergencyNet"  # MobileNet_v2
-
-
-def eval(model, dataloaders,):
+def eval(model, dataloader, ):
     y_pred = []
     y_true = []
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.to(device)
     # iterate over test data
     model.eval()
-    for inputs, labels in dataloaders['val']:
+    for inputs, labels in dataloader:
         inputs = inputs.to(device)
         labels = labels.to(device)
 
@@ -53,29 +62,29 @@ def main():
 
     # LOAD DATA
     data_transforms = {
-     'train': transforms.Compose([
-         transforms.RandomResizedCrop(INPUT_SIZE),
-         transforms.RandomHorizontalFlip(),
-         transforms.ToTensor(),
-         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-     ]),
-     'val': transforms.Compose([
-         transforms.Resize(INPUT_SIZE),
-         transforms.CenterCrop(INPUT_SIZE),
-         transforms.ToTensor(),
-         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-     ]),
+        'train': transforms.Compose([
+            transforms.RandomResizedCrop(INPUT_SIZE),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ]),
+        'val': transforms.Compose([
+            transforms.Resize(INPUT_SIZE),
+            transforms.CenterCrop(INPUT_SIZE),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ]),
     }
 
     # Create dataloaders "train" and "val"
-    dataloaders = load_dataset(data_dir, data_transforms)
+    train_loader, val_loader, my_datasets = load_dataset(data_dir, data_transforms)
 
-    model = select_model(model_name, classes=5)
-    # model = ACFFModel(5) # Loading emergencyNet model
-    saved_state_dict = torch.load('../results/EfficientNet_B0_best.pth')
+    # model = select_model(model_name, classes=5)
+    model = ACFFModel(5)  # Loading emergencyNet model
+    saved_state_dict = torch.load('../results/emergencyNetv12_best.pth')
     model.load_state_dict(saved_state_dict['state_dict'])
 
-    print(model)
+    # print(model)
     # save entire model
     # torch.save(model, '../results/emergencyNet.pth')
 
@@ -83,9 +92,8 @@ def main():
     print_no_of_parameter(model)
 
     # Evaluate the Model
-    eval(model, dataloaders)
+    eval(model, val_loader)
 
 
 if __name__ == '__main__':
     main()
-

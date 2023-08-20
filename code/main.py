@@ -1,5 +1,6 @@
 from __future__ import print_function
 from __future__ import division
+import random
 import torch
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
@@ -11,23 +12,31 @@ import numpy as np
 from my_utils.dataset import load_dataset
 from my_utils.helper_fns import AverageMeter, accuracy, ProgressMeter
 from my_models import *
-from emergencyNet import ACFFModel
+# from emergencyNet import ACFFModel
+from emergencyNet2 import ACFFModel
 
 import time
 import gc
 
 
 num_classes = 5
-batch_size = 64
-num_epochs = 300     # Number of epochs to train for
+batch_size = 32
+num_epochs = 150     # Number of epochs to train for
 INPUT_SIZE = 224   # 2
 data_dir = '../../dataset/AIDER/'
 
 """ Implemented models [ MobileNet_v2, MobileNet_v3, SqeezeNet1_0, VGG16, ShuffleNet_v2 <--
     EfficientNet_B0  ResNet50
 """
-model_name = "emergencyNet"
-cudnn.benchmark = True
+model_name = "emergencyNetv12"
+seed = 42
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(seed)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 # Flag for feature extracting. When False, we finetune the whole model,
 #   when True we only update the reshaped layer params
@@ -35,20 +44,20 @@ feature_extract = True
 best_acc1 = 0
 
 
-def train_model(model, dataloaders, criterion, device, optimizer, scheduler, epoch):
+def train_model(model, train_dataloader, val_dataloader, criterion, device, optimizer, scheduler, epoch):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
-    progress = ProgressMeter(len(dataloaders['train']), [batch_time, data_time, losses, top1, top5],
+    progress = ProgressMeter(len(train_dataloader), [batch_time, data_time, losses, top1, top5],
                              prefix="Epoch: [{}]".format(epoch))
 
     # switch to train mode
     model.train()
 
     end = time.time()
-    for i, (images, target) in enumerate(dataloaders['train']):
+    for i, (images, target) in enumerate(train_dataloader):
         # measure data loading time
         data_time.update(time.time() - end)
 
@@ -172,7 +181,7 @@ def main():
     }
 
     # Create dataloaders "train" and "val"
-    dataloaders = load_dataset(data_dir, data_transforms)
+    train_loader, val_loader, my_datasets = load_dataset(data_dir, data_transforms, batch_size)
 
     # Initialize the model for this run
     # model = initialize_model(num_classes, feature_extract, use_pretrained=True)
@@ -180,7 +189,7 @@ def main():
     model = ACFFModel(num_classes)
 
     # Print the model we just instantiated
-    print(model)
+    # print(model)
 
     # Detect if we have a GPU available
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -206,7 +215,7 @@ def main():
 
     optimizer = optim.SGD(params_to_update, lr=0.01, momentum=0.9)
 
-    steps_per_epoch = len(dataloaders['train'])
+    steps_per_epoch = len(train_loader)
     # Define the cosine annealing learning rate scheduler
     scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * steps_per_epoch, eta_min=0.001)
     # scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
@@ -221,10 +230,10 @@ def main():
     val_acc_history = []
     for epoch in range(num_epochs):
 
-        train_model(model, dataloaders, criterion, device, optimizer, scheduler, epoch)
+        train_model(model, train_loader, val_loader, criterion, device, optimizer, scheduler, epoch)
 
         # evaluate on validation set
-        acc1 = validate(dataloaders['val'], model, criterion, device)
+        acc1 = validate(val_loader, model, criterion, device)
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
