@@ -2,7 +2,8 @@ import torch
 from torch import nn
 from torchvision import models
 from my_models import *
-from emergencyNet import ACFFModel
+# from emergencyNet import ACFFModel
+from emergencyNet2 import ACFFModel
 from my_utils.helper_fns import print_size_of_model, print_no_of_parameter
 from thop import profile
 

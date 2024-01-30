@@ -1,3 +1,5 @@
+from typing import List
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -91,30 +93,30 @@ class FusionBlock(nn.Module):
         self.name = name
         self.type = fusion_type
 
-    def forward(self, tensors):
+    def forward(self, tensors: List[torch.Tensor]):
         if self.type == 'add':
             out = tensors[0]
             for tensor in tensors[1:]:
                 out = torch.add(out, tensor)
             return out
 
-        if self.type == 'max':
-            out = torch.max(*tensors)
-            out_named = out.clone().detach().requires_grad_(True)
-            out_named.set_(out_named, name='max_' + self.name)
-            return out_named
+        # if self.type == 'max':
+        #     out = torch.max(*tensors)
+        #     out_named = out.clone().detach().requires_grad_(True)
+        #     out_named.set_(out_named, name='max_' + self.name)
+        #     return out_named
 
-        if self.type == 'con':
-            out = torch.cat(tensors, dim=1)
-            out_named = out.clone().detach().requires_grad_(True)
-            out_named.set_(out_named, name='con_' + self.name)
-            return out_named
+        # if self.type == 'con':
+        #     out = torch.cat(tensors, dim=1)
+        #     out_named = out.clone().detach().requires_grad_(True)
+        #     out_named.set_(out_named, name='con_' + self.name)
+        #     return out_named
 
-        if self.type == 'avg':
-            out = torch.mean(torch.stack(tensors, dim=0), dim=0)
-            out_named = out.clone().detach().requires_grad_(True)
-            out_named.set_(out_named, name='avg_' + self.name)
-            return out_named
+        # if self.type == 'avg':
+        #     out = torch.mean(torch.stack(tensors, dim=0), dim=0)
+        #     out_named = out.clone().detach().requires_grad_(True)
+        #     out_named.set_(out_named, name='avg_' + self.name)
+        #     return out_named
 
 
 class Activation(nn.Module):
@@ -139,8 +141,8 @@ class Activation(nn.Module):
             return torch.sigmoid(x)
         if self.t == 't':
             return torch.tanh(x)
-        if self.t == 'm':
-            return Mish.forward(x)
+        # if self.t == 'm':
+        #     return Mish.forward(x)
         return x
 
 
@@ -182,11 +184,17 @@ class AtrousBlock(nn.Module):
         x_redu = self.bn_redu(x_redu)
         x_redu = self.act_redu(x_redu)
 
-        x_depth_list = [self.conv_depth_list[i](x_redu) for i in range(3)]
-        x_depth_list = [self.bn_list[i](x_depth_list[i]) for i in range(3)]
-        x_depth_list = [self.act_depth(x_depth_list[i]) for i in range(3)]
-        x_depth_list = [F.interpolate(x_depth_list[i], size=x_depth_list[0].shape[2:], mode='bilinear',
-                                      align_corners=False) for i in range(3)]
+        # x_depth_list = [self.conv_depth_list[i](x_redu) for i in enumerate(depth3)]
+        x_depth_list = [self.conv_depth_list[0](x_redu), self.conv_depth_list[1](x_redu), self.conv_depth_list[2](x_redu)]
+        x_depth_list = [self.bn_list[0](x_depth_list[0]), self.bn_list[1](x_depth_list[1]),
+                        self.bn_list[2](x_depth_list[2])]
+        x_depth_list = [self.act_depth(x_depth_list[0]), self.act_depth(x_depth_list[1]), self.act_depth(x_depth_list[2])]
+
+        # x_depth_list = [F.interpolate(x_depth_list[i], size=x_depth_list[0].shape[2:], mode='bilinear',
+        #                               align_corners=False) for i in range(3)]
+        x_depth_list = [F.interpolate(x_depth_list[0], size=x_depth_list[0].shape[2:], mode='bilinear', align_corners=False),
+                        F.interpolate(x_depth_list[1], size=x_depth_list[0].shape[2:], mode='bilinear', align_corners=False),
+                        F.interpolate(x_depth_list[2], size=x_depth_list[0].shape[2:], mode='bilinear', align_corners=False)]
 
         x_fused = self.fusion_block(x_depth_list + [x_redu])
 

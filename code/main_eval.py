@@ -9,9 +9,9 @@ from my_utils.helper_fns import print_size_of_model, print_no_of_parameter
 import numpy as np
 import torch
 from torchvision import transforms
-from emergencyNet2 import ACFFModel
+from emergencyNet import ACFFModel
 
-model_name = "emergencyNetv12"  # "EfficientNet_B0"  # emergencyNet"  # MobileNet_v2
+model_name = "emergencyNet"  # "EfficientNet_B0"  # emergencyNet"  # MobileNet_v2
 
 seed = 42
 random.seed(seed)
@@ -81,18 +81,22 @@ def main():
 
     # model = select_model(model_name, classes=5)
     model = ACFFModel(5)  # Loading emergencyNet model
-    saved_state_dict = torch.load('../results/emergencyNetv12_best.pth')
+    saved_state_dict = torch.load('../results/emergencyNet_best.pth')
     model.load_state_dict(saved_state_dict['state_dict'])
 
-    # print(model)
+    print(model)
     # save entire model
     # torch.save(model, '../results/emergencyNet.pth')
+
+    # Export / Load Model in TorchScript Format
+    # model_scripted = torch.jit.script(model)  # Export to TorchScript
+    # model_scripted.save('model_scripted.pt')  # Save
 
     print_size_of_model(model)
     print_no_of_parameter(model)
 
     # Evaluate the Model
-    eval(model, val_loader)
+    # eval(model, val_loader)
 
 
 if __name__ == '__main__':
